@@ -36,7 +36,6 @@
    - [Violentmonkey](https://violentmonkey.github.io/)
 
 2. [点击此处安装脚本](https://yzeblog.dev.tc/mengze-tool-pro.user.js)  
-   (请将链接替换为实际脚本地址)
 
 3. 刷新任意网页即可看到右下角浮动按钮
 
