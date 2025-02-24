@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MengZe Tool Pro
 // @namespace    https://yzeblog.dev.tc/
-// @version      0.6
+// @version      0.6.1
 // @description  Professional debugging toolkit with enhanced features
 // @author       MengZe2
 // @run-at       document-end
@@ -17,7 +17,7 @@
 
 (function() {
     'use strict';
-    
+
     const state = {
         darkMode: GM_getValue('darkMode', false),
         networkMonitor: false,
@@ -27,6 +27,7 @@
 
     let networkLogs = [];
     let networkWindow = null;
+    let stopNetworkMonitoring = null;
 
     const floatBtn = createFloatButton();
     const controlPanel = createControlPanel();
@@ -67,24 +68,24 @@
             justifyContent: 'center',
             transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
         });
-        
+
         btn.addEventListener('mouseover', () => {
             btn.style.transform = 'scale(1.1)';
             btn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
         });
-        
+
         btn.addEventListener('mouseout', () => {
             btn.style.transform = 'scale(1)';
             btn.style.boxShadow = '0 2px 5px rgba(0,0,0,0.3)';
         });
-        
+
         btn.addEventListener('click', () => {
             btn.style.transform = controlPanel.style.opacity === '0' 
                 ? 'rotate(360deg) scale(1.1)'
                 : 'rotate(0deg) scale(1)';
             togglePanel(controlPanel, controlPanel.style.opacity === '0');
         });
-        
+
         return btn;
     }
 
@@ -133,12 +134,12 @@
                 cursor: 'pointer',
                 transition: '0.3s'
             });
-            
+
             btn.addEventListener('click', () => {
                 feat.action();
                 togglePanel(controlPanel, false);
             });
-            
+
             panel.appendChild(btn);
         });
 
@@ -146,7 +147,7 @@
     }
 
     // 核心功能实现 ----
-    
+
     function toggleDarkMode() {
         state.darkMode = !state.darkMode;
         GM_setValue('darkMode', state.darkMode);
@@ -156,100 +157,181 @@
 
     function toggleNetworkMonitor() {
         state.networkMonitor = !state.networkMonitor;
-        if(state.networkMonitor) {
-            interceptNetworkRequests();
+        if (state.networkMonitor) {
+            stopNetworkMonitoring = startNetworkMonitoring();
             createNetworkMonitorWindow();
         } else {
-            networkWindow.close();
+            if (stopNetworkMonitoring) {
+                stopNetworkMonitoring();
+                stopNetworkMonitoring = null;
+            }
+            if (networkWindow && !networkWindow.closed) {
+                networkWindow.close();
+            }
             networkWindow = null;
+            networkLogs = [];
         }
     }
 
-    function interceptNetworkRequests() {
+    function startNetworkMonitoring() {
         const originalFetch = window.fetch;
+        const originalXHR = window.XMLHttpRequest;
+
         window.fetch = async (...args) => {
             const start = Date.now();
-            const response = await originalFetch(...args);
-            logNetworkRequest({
-                url: args[0],
-                method: 'GET',
-                status: response.status,
-                duration: Date.now() - start,
-                type: 'fetch'
-            });
-            return response;
+            try {
+                const response = await originalFetch(...args);
+                logNetworkRequest({
+                    url: (typeof args[0] === 'string' ? args[0] : args[0].url) || 'unknown',
+                    method: (args[1]?.method || 'GET').toUpperCase(),
+                    status: response.status,
+                    duration: Date.now() - start,
+                    type: 'fetch'
+                });
+                return response;
+            } catch (error) {
+                logNetworkRequest({
+                    url: (typeof args[0] === 'string' ? args[0] : args[0].url) || 'unknown',
+                    method: (args[1]?.method || 'GET').toUpperCase(),
+                    status: 0,
+                    duration: Date.now() - start,
+                    type: 'fetch'
+                });
+                throw error;
+            }
         };
 
-        const originalXHR = window.XMLHttpRequest;
+        // 拦截XHR
         window.XMLHttpRequest = class extends originalXHR {
+            constructor() {
+                super();
+                this._startTime = 0;
+                this._method = 'GET';
+                this._url = '';
+            }
+
             open(method, url) {
-                this._method = method;
+                this._method = method.toUpperCase();
                 this._url = url;
                 super.open(method, url);
             }
+
             send(data) {
-                const start = Date.now();
+                this._startTime = Date.now();
                 this.addEventListener('loadend', () => {
                     logNetworkRequest({
                         url: this._url,
                         method: this._method,
-                        status: this.status,
-                        duration: Date.now() - start,
+                        status: this.status || 0,
+                        duration: Date.now() - this._startTime,
                         type: 'xhr'
                     });
                 });
                 super.send(data);
             }
         };
+
+        const observer = new PerformanceObserver(list => {
+            list.getEntries().forEach(entry => {
+                logNetworkRequest({
+                    url: entry.name,
+                    method: 'GET',
+                    status: entry.responseStatus || (entry.duration > 0 ? 200 : 0),
+                    duration: entry.duration,
+                    type: entry.initiatorType || 'resource'
+                });
+            });
+        });
+
+        performance.getEntriesByType('resource').forEach(entry => {
+            logNetworkRequest({
+                url: entry.name,
+                method: 'GET',
+                status: entry.responseStatus || (entry.duration > 0 ? 200 : 0),
+                duration: entry.duration,
+                type: entry.initiatorType || 'resource'
+            });
+        });
+
+        observer.observe({ type: 'resource', buffered: true });
+
+        return () => {
+            window.fetch = originalFetch;
+            window.XMLHttpRequest = originalXHR;
+            observer.disconnect();
+        };
     }
 
     function logNetworkRequest(data) {
         networkLogs.push(data);
-        if(networkLogs.length > 100) networkLogs.shift();
+        if (networkLogs.length > 200) networkLogs.shift();
     }
 
     function createNetworkMonitorWindow() {
-        networkWindow = window.open('', '_blank', 'width=600,height=400');
-        networkWindow.document.write(`
+        const htmlContent = `
+            <!DOCTYPE html>
             <html>
             <head>
                 <title>网络监控 - ${document.title}</title>
                 <style>
+                    body { font-family: Arial, sans-serif; margin: 10px; }
                     table { width: 100%; border-collapse: collapse; }
-                    th, td { padding: 8px; border: 1px solid #ddd; }
-                    tr:nth-child(even) { background: #f5f5f5; }
+                    th, td { padding: 8px; border: 1px solid #ddd; text-align: left; }
+                    tr:nth-child(even) { background-color: #f2f2f2; }
+                    .status-200 { color: #28a745; }
+                    .status-404 { color: #dc3545; }
+                    .status-0 { color: #6c757d; }
                 </style>
             </head>
             <body>
-                <h2>网络请求监控</h2>
+                <h2>网络请求监控 (${new Date().toLocaleString()})</h2>
                 <table id="networkTable">
-                    <tr><th>方法</th><th>URL</th><th>状态</th><th>耗时</th><th>类型</th></tr>
+                    <thead><tr>
+                        <th>方法</th><th>类型</th><th>状态</th><th>耗时</th><th>资源</th>
+                    </tr></thead>
+                    <tbody></tbody>
                 </table>
+                <script>
+                    window.addEventListener('message', e => {
+                        if (e.data.type === 'networkUpdate') {
+                            const tbody = document.querySelector('#networkTable tbody');
+                            tbody.innerHTML = e.data.logs.map(log => {
+                                return '<tr>' +
+                                    '<td>' + log.method + '</td>' +
+                                    '<td>' + log.type + '</td>' +
+                                    '<td class="status-' + log.status + '">' + 
+                                        (log.status || 'pending') + '</td>' +
+                                    '<td>' + log.duration.toFixed(1) + 'ms</td>' +
+                                    '<td style="max-width:400px;overflow:hidden;text-overflow:ellipsis">' + 
+                                        log.url + '</td>' +
+                                '</tr>';
+                            }).join('');
+                        }
+                    });
+                </script>
             </body>
             </html>
-        `);
+        `;
+
+        networkWindow = window.open(
+            'about:blank',
+            'networkMonitor',
+            'width=800,height=600,scrollbars=yes'
+        );
+        networkWindow.document.write(htmlContent);
+        networkWindow.document.close();
+
 
         const updateInterval = setInterval(() => {
-            if(!networkWindow) {
+            if (!networkWindow || networkWindow.closed) {
                 clearInterval(updateInterval);
                 return;
             }
-            
-            const rows = networkLogs.map(log => `
-                <tr>
-                    <td>${log.method}</td>
-                    <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${log.url}</td>
-                    <td>${log.status}</td>
-                    <td>${log.duration}ms</td>
-                    <td>${log.type}</td>
-                </tr>
-            `).join('');
-            
-            networkWindow.document.getElementById('networkTable').innerHTML = `
-                <tr><th>方法</th><th>URL</th><th>状态</th><th>耗时</th><th>类型</th></tr>
-                ${rows}
-            `;
-        }, 1000);
+            networkWindow.postMessage({
+                type: 'networkUpdate',
+                logs: networkLogs.slice(-50) 
+            }, '*');
+        }, 500);
     }
 
     function toggleElementInspector() {
