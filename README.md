@@ -1,6 +1,6 @@
 # MengZe Tool Pro - 面向移动端的专业网页调试工具套件
 
-![Tampermonkey Version](https://img.shields.io/badge/Tampermonkey-v4.19+-blue) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-0.6-orange)
+![Tampermonkey Version](https://img.shields.io/badge/Tampermonkey-v4.19+-blue) ![License](https://img.shields.io/badge/License-MIT-green) ![Version](https://img.shields.io/badge/Version-0.7.0-orange)
 
 **MengZe Tool Pro** 是一款面向Web开发者的专业级网页调试工具套件，集成了多种实用功能，帮助开发者提升调试效率。通过浮动控制面板提供快速访问功能，支持暗黑模式，并包含丰富的调试工具。
 
