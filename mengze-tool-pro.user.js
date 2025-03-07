@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MengZe Tool Pro
 // @namespace    https://yzeblog.dev.tc/
-// @version      0.6.1
+// @version      0.7.0
 // @description  Professional debugging toolkit with enhanced features
 // @author       MengZe2
 // @run-at       document-end
@@ -11,6 +11,8 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_openInTab
+// @grant        GM_registerMenuCommand
+// @grant        GM_unregisterMenuCommand
 // @connect      *
 // @license      MIT
 // ==/UserScript==
@@ -22,36 +24,58 @@
         darkMode: GM_getValue('darkMode', false),
         networkMonitor: false,
         activeInspector: null,
-        currentTheme: 'default'
+        currentTheme: GM_getValue('theme', 'default'),
+        interceptRequests: GM_getValue('interceptRequests', false),
+        shortcutKey: GM_getValue('shortcutKey', 'Ctrl+M'),
+        errorMonitor: true
     };
 
     let networkLogs = [];
     let networkWindow = null;
     let stopNetworkMonitoring = null;
+    let originalFetch = window.fetch;
+    let originalXHR = window.XMLHttpRequest;
 
+    // 初始化UI组件
     const floatBtn = createFloatButton();
     const controlPanel = createControlPanel();
     document.body.appendChild(floatBtn);
     document.body.appendChild(controlPanel);
 
     initTheme();
+    registerShortcut();
+    initErrorMonitoring();
 
+    // 样式初始化
     function initTheme() {
+        const themes = {
+            default: { bg: '#fff', text: '#000', btn: '#f5f5f5' },
+            dark: { bg: '#2d2d2d', text: '#fff', btn: '#3a3a3a' },
+            blue: { bg: '#1a365f', text: '#fff', btn: '#2a4a7f' }
+        };
+
         GM_addStyle(`
             .mengze-tool-panel {
-                background: ${state.darkMode ? '#2d2d2d' : '#fff'} !important;
-                color: ${state.darkMode ? '#fff' : '#000'} !important;
+                background: ${themes[state.currentTheme].bg} !important;
+                color: ${themes[state.currentTheme].text} !important;
+                min-width: 220px;
+                max-height: 80vh;
+                overflow-y: auto;
             }
             .mengze-btn {
-                background: ${state.darkMode ? '#3a3a3a' : '#f5f5f5'} !important;
-                color: ${state.darkMode ? '#fff' : '#000'} !important;
+                background: ${themes[state.currentTheme].btn} !important;
+                color: ${themes[state.currentTheme].text} !important;
+                border: 1px solid ${themes[state.currentTheme].text}20 !important;
+            }
+            .mengze-btn:hover {
+                filter: brightness(1.2);
             }
         `);
     }
 
     function createFloatButton() {
         const btn = document.createElement('div');
-        btn.innerHTML = '<span style="font-size:24px">泽</span>';
+        btn.innerHTML = '<span style="font-size:24px">🛠️</span>';
         Object.assign(btn.style, {
             position: 'fixed',
             right: '20px',
@@ -59,7 +83,7 @@
             width: '50px',
             height: '50px',
             borderRadius: '50%',
-            background: 'white',
+            background: 'linear-gradient(145deg, #6a5acd, #836fff)',
             cursor: 'pointer',
             boxShadow: '0 2px 5px rgba(0,0,0,0.3)',
             zIndex: 9999,
@@ -70,19 +94,16 @@
         });
 
         btn.addEventListener('mouseover', () => {
-            btn.style.transform = 'scale(1.1)';
+            btn.style.transform = 'scale(1.1) rotate(15deg)';
             btn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
         });
 
         btn.addEventListener('mouseout', () => {
-            btn.style.transform = 'scale(1)';
+            btn.style.transform = 'scale(1) rotate(0deg)';
             btn.style.boxShadow = '0 2px 5px rgba(0,0,0,0.3)';
         });
 
         btn.addEventListener('click', () => {
-            btn.style.transform = controlPanel.style.opacity === '0' 
-                ? 'rotate(360deg) scale(1.1)'
-                : 'rotate(0deg) scale(1)';
             togglePanel(controlPanel, controlPanel.style.opacity === '0');
         });
 
@@ -96,7 +117,6 @@
             position: 'fixed',
             right: '20px',
             bottom: '80px',
-            width: '200px',
             background: 'white',
             borderRadius: '8px',
             boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
@@ -112,10 +132,13 @@
             { name: '开启Debug', action: initEruda },
             { name: '查看源码', action: showSourceViewer },
             { name: '高级刷新', action: advancedReload },
-            { name: '暗黑模式', action: toggleDarkMode },
+            { name: '主题切换', action: switchTheme },
             { name: '网络监控', action: toggleNetworkMonitor },
             { name: '元素检查', action: toggleElementInspector },
             { name: '脚本注入', action: showScriptInjector },
+            { name: '存储管理', action: showStorageManager },
+            { name: 'Cookie管理', action: showCookieManager },
+            { name: '请求拦截', action: toggleRequestInterceptor },
             { name: '性能分析', action: initPerformanceMonitor },
             { name: '隐藏面板', action: () => togglePanel(panel, false) }
         ];
@@ -147,12 +170,207 @@
     }
 
     // 核心功能实现 ----
-
     function toggleDarkMode() {
         state.darkMode = !state.darkMode;
         GM_setValue('darkMode', state.darkMode);
-        document.documentElement.classList.toggle('mengze-dark-mode');
         initTheme();
+    }
+
+    function switchTheme() {
+        const themes = ['default', 'dark', 'blue'];
+        const currentIndex = themes.indexOf(state.currentTheme);
+        state.currentTheme = themes[(currentIndex + 1) % themes.length];
+        GM_setValue('theme', state.currentTheme);
+        initTheme();
+    }
+
+    // 存储管理功能
+    function showStorageManager() {
+        const win = window.open('', '_blank');
+        win.document.write(`
+            <html><head><title>存储管理 - ${document.title}</title>
+            <style>
+                table { width: 100%; border-collapse: collapse; margin: 10px 0 }
+                th, td { padding: 8px; border: 1px solid #ddd; }
+                .actions { display: flex; gap: 5px; }
+                button { padding: 5px 10px; cursor: pointer; }
+            </style></head>
+            <body>
+                <h3>LocalStorage 管理</h3>
+                <table id="localStorageTable">
+                    <thead><tr><th>键</th><th>值</th><th>操作</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+                <button onclick="addNewItem('local')">新增</button>
+
+                <h3>SessionStorage 管理</h3>
+                <table id="sessionStorageTable">
+                    <thead><tr><th>键</th><th>值</th><th>操作</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+                <button onclick="addNewItem('session')">新增</button>
+
+                <script>
+                    function updateStorageView() {
+                        updateTable('local', window.opener.localStorage);
+                        updateTable('session', window.opener.sessionStorage);
+                    }
+
+                    function updateTable(type, storage) {
+                        const tbody = document.querySelector(\`#\${type}StorageTable tbody\`);
+                        tbody.innerHTML = Object.keys(storage).map(key => {
+                            return \`<tr>
+                                <td>\${key}</td>
+                                <td><input value="\${storage[key]}" 
+                                     onchange="updateItem('\${type}', '\${key}', this.value)"></td>
+                                <td class="actions">
+                                    <button onclick="deleteItem('\${type}', '\${key}')">删除</button>
+                                </td>
+                            </tr>\`;
+                        }).join('');
+                    }
+
+                    function addNewItem(type) {
+                        const key = prompt('请输入键名：');
+                        if (key) {
+                            const value = prompt('请输入键值：');
+                            window.opener[type + 'Storage'].setItem(key, value);
+                            updateStorageView();
+                        }
+                    }
+
+                    function updateItem(type, key, value) {
+                        window.opener[type + 'Storage'].setItem(key, value);
+                    }
+
+                    function deleteItem(type, key) {
+                        window.opener[type + 'Storage'].removeItem(key);
+                        updateStorageView();
+                    }
+
+                    updateStorageView();
+                    setInterval(updateStorageView, 1000);
+                </script>
+            </body></html>
+        `);
+    }
+
+    // Cookie管理功能
+    function showCookieManager() {
+        const cookies = document.cookie.split(';').reduce((acc, cookie) => {
+            const [name, ...rest] = cookie.split('=');
+            acc[name.trim()] = rest.join('=');
+            return acc;
+        }, {});
+
+        const win = window.open('', '_blank');
+        win.document.write(`
+            <html><head><title>Cookie管理 - ${document.title}</title>
+            <style>
+                table { width: 100%; border-collapse: collapse; }
+                input { width: 95%; padding: 5px; }
+                td { padding: 8px; }
+            </style></head>
+            <body>
+                <h3>当前Cookies (${document.domain})</h3>
+                <table>
+                    <thead><tr><th>名称</th><th>值</th></tr></thead>
+                    <tbody>
+                        ${Object.entries(cookies).map(([name, value]) => `
+                            <tr>
+                                <td>${name}</td>
+                                <td><input value="${value}" 
+                                     onchange="updateCookie('${name}', this.value)"></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                <script>
+                    function updateCookie(name, value) {
+                        document.cookie = \`\${name}=\${value}; path=/; domain=${document.domain}\`;
+                    }
+                </script>
+            </body></html>
+        `);
+    }
+
+    // 请求拦截功能
+    function toggleRequestInterceptor() {
+        state.interceptRequests = !state.interceptRequests;
+        GM_setValue('interceptRequests', state.interceptRequests);
+
+        if (state.interceptRequests) {
+            window.fetch = async (...args) => {
+                const url = typeof args[0] === 'string' ? args[0] : args[0].url;
+                const shouldBlock = confirm(`拦截fetch请求：\nURL: ${url} \n允许此请求？`);
+                if (!shouldBlock) return new Response(null, { status: 403 });
+                return originalFetch(...args);
+            };
+
+            window.XMLHttpRequest = class extends originalXHR {
+                open(method, url) {
+                    const shouldBlock = confirm(`拦截XHR请求：\n方法: ${method} \nURL: ${url}`);
+                    if (shouldBlock) super.open(method, url);
+                    else this.abort();
+                }
+            };
+        } else {
+            window.fetch = originalFetch;
+            window.XMLHttpRequest = originalXHR;
+        }
+    }
+
+    // 快捷键功能
+    function registerShortcut() {
+        document.addEventListener('keydown', (e) => {
+            const keys = state.shortcutKey.split('+');
+            const ctrlMatch = keys.includes('Ctrl') && e.ctrlKey;
+            const shiftMatch = keys.includes('Shift') && e.shiftKey;
+            const keyMatch = keys.some(k => k.length === 1 && 
+                k.toUpperCase() === e.key.toUpperCase());
+            
+            if (ctrlMatch && shiftMatch && keyMatch) {
+                floatBtn.click();
+            }
+        });
+    }
+
+    // 错误监控功能
+    function initErrorMonitoring() {
+        window.addEventListener('error', (e) => {
+            if (state.errorMonitor) {
+                showNotification(`脚本错误：\${e.message}`, 'error');
+            }
+        });
+    }
+
+    function showNotification(message, type = 'info') {
+        const notify = document.createElement('div');
+        notify.textContent = message;
+        Object.assign(notify.style, {
+            position: 'fixed',
+            top: '20px',
+            right: '20px',
+            padding: '15px',
+            background: type === 'error' ? '#dc3545' : '#007bff',
+            color: 'white',
+            borderRadius: '5px',
+            zIndex: 100000,
+            animation: 'slideIn 0.3s ease-out'
+        });
+
+        GM_addStyle(`
+            @keyframes slideIn {
+                from { transform: translateX(100%); }
+                to { transform: translateX(0); }
+            }
+        `);
+
+        document.body.appendChild(notify);
+        setTimeout(() => {
+            notify.style.animation = 'fadeOut 0.3s ease-out';
+            setTimeout(() => notify.remove(), 300);
+        }, 2700);
     }
 
     function toggleNetworkMonitor() {
@@ -377,13 +595,13 @@
 
         const rect = element.getBoundingClientRect();
         const highlight = state.activeInspector.highlight;
-        
+
         highlight.style.display = 'block';
         highlight.style.width = `${rect.width}px`;
         highlight.style.height = `${rect.height}px`;
         highlight.style.left = `${rect.left}px`;
         highlight.style.top = `${rect.top}px`;
-        
+
         state.activeInspector.infoBox.innerHTML = `
             <div>标签: ${element.tagName}</div>
             <div>ID: ${element.id || 'N/A'}</div>
@@ -432,7 +650,7 @@
             memory: performance.memory,
             entries: performance.getEntries()
         };
-        
+
         const win = window.open('', '_blank');
         win.document.write(`
             <html>
@@ -583,12 +801,6 @@
     document.addEventListener('click', (e) => {
         if (!floatBtn.contains(e.target) && !controlPanel.contains(e.target)) {
             togglePanel(controlPanel, false);
-        }
-    });
-
-    document.addEventListener('keydown', (e) => {
-        if(e.ctrlKey && e.key === 'm') {
-            floatBtn.click();
         }
     });
 
