@@ -35,7 +35,7 @@
    - [Tampermonkey](https://www.tampermonkey.net/) (推荐)
    - [Violentmonkey](https://violentmonkey.github.io/)
 
-2. [点击此处安装脚本](https://yzeblog.dev.tc/mengze-tool-pro.user.js)  
+2. [点击此处安装脚本](https://mengze.vip/install)  
 
 3. 刷新任意网页即可看到右下角浮动按钮
 
