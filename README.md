@@ -79,3 +79,5 @@
 ---
 
 **开发者提示**：在控制台输入 `window.__MENGZE_TOOL__` 可访问调试API
+
+[![mm_reward_qrcode_1743497808845.png](https://cdn.mengze.vip/gh/YShenZe/Blog-Static-Resource@main/images/mm_reward_qrcode_1743497808845.png)](https://cdn.mengze.vip/gh/YShenZe/Blog-Static-Resource@main/images/mm_reward_qrcode_1743497808845.png)
